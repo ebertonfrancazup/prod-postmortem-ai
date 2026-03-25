@@ -9,6 +9,7 @@ You are an expert Site Reliability Engineer (SRE). Your goal is to analyze incid
 - Calculate `downtime_minutes` based on the degraded status (Critical/Warning).
 - Extract optional metrics (users, errors, main service, SLO) ONLY if supported by log data.
 - Output MUST be a valid JSON matching the schema below.
+- CRITICAL: You must explicitly ESCAPE all double quotes inside your string values (e.g., use \\"word\\" instead of "word"), otherwise the JSON parser will crash.
 - DO NOT include markdown formatting or extra text.
 
 ## Input Placeholders

@@ -75,7 +75,7 @@ Nós preparamos tudo para que seja o mais fácil e moderno de se iniciar o servi
 
 ### 📌 1. Declare sua Chave (Totalmente Grátis)
 Abra o [Google AI Studio](https://aistudio.google.com/app/apikey) e crie uma nova API Key para utilizar o Gemini nativo. 
-Na pasta raiz deste projeto, simplesmente crie um arquivo chamado `.env`:
+Na pasta raiz deste projeto, utilize o arquivo `.env.example` como base para criar o seu arquivo `.env`:
 ```env
 GOOGLE_API_KEY=AI...sua_chave_linda_aqui
 ```

@@ -4,13 +4,17 @@ import logging
 import base64
 import io
 from datetime import datetime
+import docx
+from docx import Document
+from docx.shared import Inches, Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from fastapi import HTTPException
 import google.generativeai as genai
 
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, Flowable
 from reportlab.lib.units import inch
 
 from app.schemas import AnalyzeRequest, IncidentReport
@@ -78,7 +82,12 @@ async def process_incident_data(request: AnalyzeRequest) -> IncidentReport:
                 logger.error(f"Error decoding image: {e}")
                 
         response = model.generate_content(contents)
-        report_data = json.loads(response.text)
+        try:
+            report_data = json.loads(response.text)
+        except json.JSONDecodeError:
+            import json_repair
+            logger.warning("Standard JSON parse failed, utilizing json_repair.")
+            report_data = json_repair.loads(response.text)
         
         # Capture AI Token Metrics
         if response.usage_metadata:
@@ -101,15 +110,17 @@ class ReportGenerator:
         # Custom Styles
         self.styles.add(ParagraphStyle(name='HeaderLeft', parent=self.styles['Normal'], fontSize=16, leading=20, textColor=colors.whitesmoke, fontName='Helvetica-Bold'))
         self.styles.add(ParagraphStyle(name='HeaderRight', parent=self.styles['Normal'], fontSize=10, leading=14, textColor=colors.whitesmoke, alignment=2))
-        self.styles.add(ParagraphStyle(name='MainTitle', parent=self.styles['Title'], fontSize=28, leading=34, textColor=colors.HexColor("#1D4ED8"), alignment=0, spaceAfter=2))
+        self.styles.add(ParagraphStyle(name='MainTitle', parent=self.styles['Title'], fontSize=28, leading=34, textColor=colors.HexColor("#334155"), alignment=0, spaceAfter=2))
         self.styles.add(ParagraphStyle(name='SubTitle', parent=self.styles['Normal'], fontSize=16, leading=22, textColor=colors.HexColor("#4B5563"), spaceAfter=20))
         self.styles.add(ParagraphStyle(name='CardTitle', parent=self.styles['Normal'], fontSize=10, leading=12, textColor=colors.HexColor("#6B7280"), fontName='Helvetica-Bold'))
-        self.styles.add(ParagraphStyle(name='CardValue', parent=self.styles['Normal'], fontSize=20, leading=26, textColor=colors.HexColor("#111827"), fontName='Helvetica-Bold', spaceBefore=6, spaceAfter=6))
-        self.styles.add(ParagraphStyle(name='CardValueGreen', parent=self.styles['Normal'], fontSize=20, leading=26, textColor=colors.HexColor("#10B981"), fontName='Helvetica-Bold', spaceBefore=6, spaceAfter=6))
-        self.styles.add(ParagraphStyle(name='CardValueSmall', parent=self.styles['Normal'], fontSize=13, leading=16, textColor=colors.HexColor("#111827"), fontName='Helvetica-Bold', spaceBefore=6, spaceAfter=6))
+        self.styles.add(ParagraphStyle(name='CardValue', parent=self.styles['Normal'], fontSize=16, leading=20, textColor=colors.HexColor("#334155"), fontName='Helvetica-Bold', spaceBefore=6, spaceAfter=6))
+        self.styles.add(ParagraphStyle(name='CardValueGreen', parent=self.styles['Normal'], fontSize=16, leading=20, textColor=colors.HexColor("#10B981"), fontName='Helvetica-Bold', spaceBefore=6, spaceAfter=6))
+        self.styles.add(ParagraphStyle(name='CardValueSmall', parent=self.styles['Normal'], fontSize=13, leading=16, textColor=colors.HexColor("#334155"), fontName='Helvetica-Bold', spaceBefore=6, spaceAfter=6))
         self.styles.add(ParagraphStyle(name='CardValueSmallGreen', parent=self.styles['Normal'], fontSize=13, leading=16, textColor=colors.HexColor("#10B981"), fontName='Helvetica-Bold', spaceBefore=6, spaceAfter=6))
+        self.styles.add(ParagraphStyle(name='CardValueMicro', parent=self.styles['Normal'], fontSize=10, leading=12, textColor=colors.HexColor("#334155"), fontName='Helvetica-Bold', spaceBefore=6, spaceAfter=6))
+        self.styles.add(ParagraphStyle(name='CardValueMicroGreen', parent=self.styles['Normal'], fontSize=10, leading=12, textColor=colors.HexColor("#10B981"), fontName='Helvetica-Bold', spaceBefore=6, spaceAfter=6))
         self.styles.add(ParagraphStyle(name='CardSub', parent=self.styles['Normal'], fontSize=8, leading=10, textColor=colors.HexColor("#9CA3AF")))
-        self.styles.add(ParagraphStyle(name='SectionTitle', parent=self.styles['Heading2'], fontSize=16, leading=20, textColor=colors.HexColor("#1D4ED8"), spaceAfter=10))
+        self.styles.add(ParagraphStyle(name='SectionTitle', parent=self.styles['Heading2'], fontSize=16, leading=20, textColor=colors.HexColor("#334155"), spaceAfter=10))
         self.styles.add(ParagraphStyle(name='ExecText', parent=self.styles['Normal'], fontSize=11, leading=16, textColor=colors.HexColor("#374151"), spaceAfter=14))
         self.styles.add(ParagraphStyle(name='SlaPercent', parent=self.styles['Normal'], fontSize=34, leading=40, textColor=colors.HexColor("#111827"), fontName='Helvetica-Bold', alignment=1))
         self.styles.add(ParagraphStyle(name='SlaLabel', parent=self.styles['Normal'], fontSize=10, leading=14, textColor=colors.HexColor("#6B7280"), fontName='Helvetica-Bold', alignment=1, spaceAfter=15))
@@ -120,7 +131,7 @@ class ReportGenerator:
 
     def _header_footer(self, canvas, doc):
         canvas.saveState()
-        canvas.setFillColor(colors.HexColor("#0F172A"))
+        canvas.setFillColor(colors.HexColor("#ff6900"))
         canvas.rect(0, 720, letter[0], 100, fill=1, stroke=0)
         
         canvas.setFillColor(colors.whitesmoke)
@@ -152,30 +163,61 @@ class ReportGenerator:
         card_w = (usable_width - (gap * (num_cards - 1))) / num_cards
 
         def get_value_style(val_str, is_green):
-            if len(str(val_str)) > 14:
+            length = len(str(val_str))
+            if length > 20:
+                return self.styles['CardValueMicroGreen'] if is_green else self.styles['CardValueMicro']
+            elif length > 12:
                 return self.styles['CardValueSmallGreen'] if is_green else self.styles['CardValueSmall']
             return self.styles['CardValueGreen'] if is_green else self.styles['CardValue']
 
+        class RoundedCard(Flowable):
+            def __init__(self, title_p, sub_p, value_p, width, height, bg_color="#F1F5F9", outline_color="#E2E8F0"):
+                Flowable.__init__(self)
+                self.width = width
+                self.height = height
+                self.title_p = title_p
+                self.sub_p = sub_p
+                self.value_p = value_p
+                self.bg_color = colors.HexColor(bg_color)
+                self.outline_color = colors.HexColor(outline_color)
+
+            def wrap(self, availWidth, availHeight):
+                return self.width, self.height
+
+            def draw(self):
+                self.canv.saveState()
+                self.canv.setFillColor(self.bg_color)
+                self.canv.setStrokeColor(self.outline_color)
+                self.canv.setLineWidth(0.5)
+                # Mathematical precise rounded corners filling the background perfectly
+                self.canv.roundRect(0, 0, self.width, self.height, 16, fill=1, stroke=1)
+                
+                padding = 16
+                
+                # Wrap text to calculate dimensions
+                w_t, h_t = self.title_p.wrap(self.width - padding*2, self.height)
+                w_s, h_s = self.sub_p.wrap(self.width - padding*2, self.height)
+                w_v, h_v = self.value_p.wrap(self.width - padding*2, self.height)
+
+                y_cursor = self.height - padding
+                
+                # Title Top Left
+                self.title_p.drawOn(self.canv, padding, y_cursor - h_t)
+                y_cursor -= (h_t + 2)
+                # Subtitle right below title
+                self.sub_p.drawOn(self.canv, padding, y_cursor - h_s)
+                y_cursor -= (h_s + 10) # Dynamic space before Big Number
+                # Value stacked correctly to avoid touching the subtitle
+                self.value_p.drawOn(self.canv, padding, y_cursor - h_v)
+                
+                self.canv.restoreState()
+
         def create_modern_card(title, value, sub, is_green=False):
             val_style = get_value_style(value, is_green)
-            data = [[
-                [Paragraph(title, self.styles['CardTitle']),
-                 Spacer(1, 4),
-                 Paragraph(value, val_style),
-                 Spacer(1, 4),
-                 Paragraph(sub, self.styles['CardSub'])]
-            ]]
-            t = Table(data, colWidths=[card_w])
-            t.setStyle(TableStyle([
-                ('VALIGN', (0,0), (-1,-1), 'TOP'),
-                ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")), # Very light gray
-                ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
-                ('TOPPADDING', (0,0), (-1,-1), 10),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 10),
-                ('LEFTPADDING', (0,0), (-1,-1), 10),
-                ('RIGHTPADDING', (0,0), (-1,-1), 10),
-            ]))
-            return t
+            title_p = Paragraph(title, self.styles['CardTitle'])
+            sub_p = Paragraph(sub, self.styles['CardSub'])
+            value_p = Paragraph(value, val_style)
+            return RoundedCard(title_p, sub_p, value_p, width=card_w, height=105)
 
         row1_cards = [
             create_modern_card("Impact", f"{metrics.impact}", "Incident severity", is_green=False),
@@ -309,16 +351,68 @@ class ReportGenerator:
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
         elements.append(timeline_table)
-        
-        # Token Telemetry Header
-        if report.token_usage:
-            elements.append(Spacer(1, 20))
-            usg = report.token_usage
-            elements.append(Paragraph(f"Gemini AI Telemetry: {usg.get('total_tokens', 0):,} tokens total "
-                                    f"({usg.get('prompt_tokens', 0):,} prompt / {usg.get('candidates_tokens', 0):,} output)", 
-                                    self.styles['TokenFooter']))
 
         doc.build(elements, onFirstPage=self._header_footer, onLaterPages=self._header_footer)
         pdf_bytes = buffer.getvalue()
         buffer.close()
         return pdf_bytes
+
+class DocxGenerator:
+    def __init__(self, request: AnalyzeRequest):
+        self.request = request
+
+    def generate_docx(self, report: IncidentReport) -> bytes:
+        template_path = os.path.join(os.path.dirname(__file__), 'templates', 'template.docx')
+        if os.path.exists(template_path):
+            doc = Document(template_path)
+        else:
+            logger.warning("DOCX template not found, using default.")
+            doc = Document()
+        
+        title = doc.add_heading('PROD POST-MORTEM AI - EXECUTIVE REPORT', 0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        doc.add_heading(report.metrics.incident_title, level=1)
+        
+        doc.add_heading('Key Metrics', level=2)
+        metrics = report.metrics
+        
+        table = doc.add_table(rows=1, cols=4)
+        table.style = 'Table Grid'
+        hdr_cells = table.rows[0].cells
+        hdr_cells[0].text = 'Impact'
+        hdr_cells[1].text = 'Downtime'
+        hdr_cells[2].text = 'Status'
+        hdr_cells[3].text = 'Customers'
+        
+        row_cells = table.add_row().cells
+        row_cells[0].text = str(metrics.impact)
+        row_cells[1].text = str(metrics.total_downtime)
+        row_cells[2].text = str(metrics.service_status)
+        row_cells[3].text = str(self.request.customers if self.request.customers else metrics.affected_customers)
+        
+        doc.add_paragraph()
+        
+        doc.add_heading('Executive Summary', level=2)
+        doc.add_paragraph(f"Impact: {report.executive_summary.impact}")
+        doc.add_paragraph(f"Root Cause: {report.executive_summary.root_cause}")
+        doc.add_paragraph(f"Resolution: {report.executive_summary.resolution}")
+        
+        doc.add_heading('Next Steps', level=2)
+        for step in report.next_steps:
+            doc.add_paragraph(step, style='List Bullet')
+            
+        doc.add_heading('Timeline', level=2)
+        timeline_table = doc.add_table(rows=1, cols=2)
+        timeline_table.style = 'Table Grid'
+        th = timeline_table.rows[0].cells
+        th[0].text = 'Timestamp'
+        th[1].text = 'Event'
+        for event in report.timeline:
+            tr = timeline_table.add_row().cells
+            tr[0].text = event.timestamp
+            tr[1].text = event.event
+            
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        return buffer.getvalue()

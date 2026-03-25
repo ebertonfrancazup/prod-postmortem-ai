@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.endpoints import router as api_router
 
-app = FastAPI(title="PRODRESCUE AI", description="Incident Report Generator")
+app = FastAPI(title="Prod Post Mortem AI", description="Incident Report Generator")
 
 # Mount frontend
 app.mount("/static", StaticFiles(directory="static"), name="static")

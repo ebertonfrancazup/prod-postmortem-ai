@@ -32,3 +32,20 @@ async def export_pdf_endpoint(request_data: dict):
     except Exception as e:
         logger.error(f"Error generating PDF: {e}")
         raise HTTPException(status_code=500, detail="Error generating PDF report")
+
+@router.post("/export-docx")
+async def export_docx_endpoint(request_data: dict):
+    from app.services import DocxGenerator
+    original_req = AnalyzeRequest(**request_data['request'])
+    report = IncidentReport(**request_data['report'])
+    
+    generator = DocxGenerator(original_req)
+    try:
+        docx_bytes = generator.generate_docx(report)
+        safe_title = report.metrics.incident_title.replace(' ', '_').replace('/', '')
+        return Response(content=docx_bytes, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={
+            "Content-Disposition": f"attachment; filename=Executive_Report_{safe_title}.docx"
+        })
+    except Exception as e:
+        logger.error(f"Error generating DOCX: {e}")
+        raise HTTPException(status_code=500, detail="Error generating DOCX document")

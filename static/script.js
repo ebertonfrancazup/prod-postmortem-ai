@@ -10,11 +10,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const fileUpload = document.getElementById('fileUpload');
     const fileList = document.getElementById('fileList');
     const logsInput = document.getElementById('logsInput');
-    
+
     const timeRange = document.getElementById('timeRange');
     const affectedServices = document.getElementById('affectedServices');
     const keyStakeholders = document.getElementById('keyStakeholders');
-    
+
     const generateBtn = document.getElementById('generateBtn');
     const btnText = document.getElementById('btnText');
     const errorBox = document.getElementById('errorBox');
@@ -31,7 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // File Drag & Drop
     dropZone.addEventListener('click', () => fileUpload.click());
-    
+
     dropZone.addEventListener('dragover', (e) => {
         e.preventDefault();
         dropZone.classList.add('dragover');
@@ -58,7 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function handleFiles(files) {
         Array.from(files).forEach(file => {
             const ext = file.name.split('.').pop().toLowerCase();
-            
+
             // Add pill to UI
             const pill = document.createElement('div');
             pill.className = 'file-item';
@@ -72,7 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 reader.onload = (e) => {
                     attachedImagesBase64.push(e.target.result);
                     pill.textContent = file.name + " (Vision Ready)";
-                    pill.style.background = "rgba(16, 185, 129, 0.2)"; 
+                    pill.style.background = "rgba(16, 185, 129, 0.2)";
                 };
                 reader.readAsDataURL(file);
             } else if (['txt', 'log', 'json', 'csv'].includes(ext)) {
@@ -82,7 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 reader.onload = (e) => {
                     attachedFilesText += `\n\n--- FILE: ${file.name} ---\n${e.target.result}`;
                     pill.textContent = file.name + " (Text Ready)";
-                    pill.style.background = "rgba(16, 185, 129, 0.2)"; 
+                    pill.style.background = "rgba(16, 185, 129, 0.2)";
                 };
                 reader.readAsText(file);
             } else {
@@ -108,7 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const payload = {
             logs: logs,
-            transcription: "", 
+            transcription: "",
             time_range: timeRange.value.trim() || null,
             affected_services: affectedServices.value.trim() || null,
             impact: selectedImpact,
@@ -136,31 +136,23 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const reportJson = await analyzeRes.json();
+            
+            // Store globally so buttons can access them
+            window.lastPayload = payload;
+            window.lastReport = reportJson;
 
-            // Step 2: Export PDF
-            const pdfRes = await fetch('/export-pdf', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    request: payload,
-                    report: reportJson
-                })
-            });
-
-            if (!pdfRes.ok) throw new Error('Failed to generate PDF.');
-
-            // Download PDF blob
-            const blob = await pdfRes.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.style.display = 'none';
-            a.href = url;
-            a.download = reportJson.metrics && reportJson.metrics.incident_title 
-                ? `Executive_Report_${reportJson.metrics.incident_title.replace(/\s+/g, '_')}.pdf`
-                : 'executive_report.pdf';
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
+            if (reportJson.token_usage) {
+                let tElem = document.getElementById('telemetryInfo');
+                if (!tElem) {
+                    tElem = document.createElement('p');
+                    tElem.id = 'telemetryInfo';
+                    tElem.style.marginTop = '20px';
+                    tElem.style.fontSize = '12px';
+                    tElem.style.color = '#9ca3af';
+                    document.getElementById('successBox').appendChild(tElem);
+                }
+                tElem.innerHTML = `🔮 Gemini Telemetry: <b>${reportJson.token_usage.total_tokens.toLocaleString()}</b> tokens total (${reportJson.token_usage.prompt_tokens.toLocaleString()} prompt / ${reportJson.token_usage.candidates_tokens.toLocaleString()} output)`;
+            }
 
             successBox.style.display = "block";
 
@@ -178,12 +170,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 const res = await fetch('/static/example_logs.txt');
                 if (!res.ok) throw new Error("Could not load example logs.");
                 const text = await res.text();
-                
+
                 // Populate forms according to the example spec
                 logsInput.value = text;
                 slaHours.value = "2";
                 customersInput.value = "Hawk Bank";
-                
+
                 // Select High Impact visually and functionally
                 impactPills.forEach(p => p.classList.remove('selected'));
                 const highPill = Array.from(impactPills).find(p => p.dataset.impact === "High");
@@ -196,6 +188,50 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    const downloadPdfBtn = document.getElementById('downloadPdfBtn');
+    const downloadDocxBtn = document.getElementById('downloadDocxBtn');
+
+    async function handleDownload(endpoint, ext, btn) {
+        if (!window.lastPayload || !window.lastReport) return;
+        
+        btn.disabled = true;
+        const originalText = btn.textContent;
+        btn.textContent = "Downloading...";
+        
+        try {
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    request: window.lastPayload,
+                    report: window.lastReport
+                })
+            });
+            if (!res.ok) throw new Error(`Failed to generate ${ext.toUpperCase()}.`);
+            
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            const safeTitle = window.lastReport.metrics && window.lastReport.metrics.incident_title 
+                ? window.lastReport.metrics.incident_title.replace(/\s+/g, '_') 
+                : 'executive_report';
+            a.download = `Executive_Report_${safeTitle}.${ext}`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            showError(err.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+    }
+
+    if (downloadPdfBtn) downloadPdfBtn.addEventListener('click', () => handleDownload('/export-pdf', 'pdf', downloadPdfBtn));
+    if (downloadDocxBtn) downloadDocxBtn.addEventListener('click', () => handleDownload('/export-docx', 'docx', downloadDocxBtn));
 
     function setLoading(isLoading) {
         generateBtn.disabled = isLoading;
