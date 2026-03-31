@@ -362,57 +362,200 @@ class DocxGenerator:
         self.request = request
 
     def generate_docx(self, report: IncidentReport) -> bytes:
-        template_path = os.path.join(os.path.dirname(__file__), 'templates', 'template.docx')
+        import copy as copy_mod
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+
+        template_path = os.path.join(os.path.dirname(__file__), 'templates', 'Template.docx')
         if os.path.exists(template_path):
             doc = Document(template_path)
         else:
             logger.warning("DOCX template not found, using default.")
             doc = Document()
-        
-        title = doc.add_heading('PROD POST-MORTEM AI - EXECUTIVE REPORT', 0)
-        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        
-        doc.add_heading(report.metrics.incident_title, level=1)
-        
-        doc.add_heading('Key Metrics', level=2)
+
         metrics = report.metrics
-        
-        table = doc.add_table(rows=1, cols=4)
-        table.style = 'Table Grid'
-        hdr_cells = table.rows[0].cells
-        hdr_cells[0].text = 'Impact'
-        hdr_cells[1].text = 'Downtime'
-        hdr_cells[2].text = 'Status'
-        hdr_cells[3].text = 'Customers'
-        
-        row_cells = table.add_row().cells
-        row_cells[0].text = str(metrics.impact)
-        row_cells[1].text = str(metrics.total_downtime)
-        row_cells[2].text = str(metrics.service_status)
-        row_cells[3].text = str(self.request.customers if self.request.customers else metrics.affected_customers)
-        
-        doc.add_paragraph()
-        
-        doc.add_heading('Executive Summary', level=2)
-        doc.add_paragraph(f"Impact: {report.executive_summary.impact}")
-        doc.add_paragraph(f"Root Cause: {report.executive_summary.root_cause}")
-        doc.add_paragraph(f"Resolution: {report.executive_summary.resolution}")
-        
-        doc.add_heading('Next Steps', level=2)
-        for step in report.next_steps:
-            doc.add_paragraph(step, style='List Bullet')
-            
-        doc.add_heading('Timeline', level=2)
-        timeline_table = doc.add_table(rows=1, cols=2)
-        timeline_table.style = 'Table Grid'
-        th = timeline_table.rows[0].cells
-        th[0].text = 'Timestamp'
-        th[1].text = 'Event'
-        for event in report.timeline:
-            tr = timeline_table.add_row().cells
-            tr[0].text = event.timestamp
-            tr[1].text = event.event
-            
+        customers = self.request.customers if self.request.customers else metrics.affected_customers
+
+        def set_text(para, text):
+            """Replace paragraph content keeping first run's formatting."""
+            for run in para.runs:
+                run.text = ''
+            if para.runs:
+                para.runs[0].text = str(text)
+            else:
+                para.add_run(str(text))
+
+        def find_para(substr):
+            for p in doc.paragraphs:
+                if substr in p.text:
+                    return p
+            return None
+
+        def find_next_empty(ref_para, lookahead=3):
+            """Return the next empty paragraph after ref_para within lookahead distance."""
+            found = False
+            count = 0
+            for p in doc.paragraphs:
+                if p._p is ref_para._p:
+                    found = True
+                    continue
+                if found:
+                    if not p.text.strip():
+                        return p
+                    count += 1
+                    if count >= lookahead:
+                        break
+            return None
+
+        def insert_after(ref_para, text):
+            """Insert a new paragraph after ref_para copying its style, return the new para."""
+            new_p = copy_mod.deepcopy(ref_para._p)
+            for r in new_p.findall(qn('w:r')):
+                new_p.remove(r)
+            ref_para._p.addnext(new_p)
+            new_r = OxmlElement('w:r')
+            new_t = OxmlElement('w:t')
+            new_t.text = str(text)
+            new_t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+            new_r.append(new_t)
+            new_p.append(new_r)
+            from docx.text.paragraph import Paragraph as DocxPara
+            return DocxPara(new_p, new_p.getparent())
+
+        # === HEADER FIELDS ===
+        set_text(doc.paragraphs[1], metrics.incident_title)
+
+        start_time = report.timeline[0].timestamp if report.timeline else ''
+        p = find_para('Data/Hora do início do incidente:')
+        if p:
+            set_text(p, f"Data/Hora do início do incidente: {start_time}")
+
+        end_time = report.timeline[-1].timestamp if report.timeline else ''
+        p = find_para('Data/Hora do fim do incidente:')
+        if p:
+            set_text(p, f"Data/Hora do fim do incidente: {end_time}")
+
+        p = find_para('Duração: 1 dia') or find_para('Duração:')
+        if p:
+            set_text(p, f"Duração: {metrics.total_downtime}")
+
+        p = find_para('Status:')
+        if p:
+            set_text(p, f"Status: {metrics.service_status}")
+
+        p = find_para('Impacto: ')
+        if p:
+            set_text(p, f"Impacto: {metrics.impact}")
+
+        p = find_para('Impacto SLA:')
+        if p:
+            sla_max_min = self.request.sla_hours * 60
+            sla_used = round((metrics.downtime_minutes / sla_max_min) * 100) if sla_max_min > 0 else 0
+            sla_text = f"Impacto SLA: {sla_used}% do budget de SLA utilizado ({metrics.downtime_minutes}min de {sla_max_min}min)"
+            if metrics.infra_slo:
+                sla_text += f"\n\nImpacto SLO: {metrics.infra_slo}"
+            set_text(p, sla_text)
+
+        p = find_para('% de requisições afetadas:')
+        if p:
+            set_text(p, f"% de requisições afetadas: {metrics.affected_users or ''}")
+
+        p = find_para('Canal do incidente:')
+        if p:
+            set_text(p, f"Canal do incidente: {customers}")
+
+        # Clear the secondary "Duração: 1 hora" placeholder line
+        p = find_para('Duração: 1 hora')
+        if p:
+            set_text(p, '')
+
+        # === EXECUTIVE SUMMARY SECTION ===
+        p = find_para('Resumo executivo do Incidente:')
+        if p:
+            set_text(p, f"📋 Resumo executivo do Incidente: {metrics.incident_title}")
+            empty = find_next_empty(p)
+            if empty:
+                set_text(empty, report.executive_summary.impact)
+
+        p = find_para('Causa Raiz (Root Cause)')
+        if p:
+            empty = find_next_empty(p)
+            if empty:
+                set_text(empty, report.executive_summary.root_cause)
+
+        p = find_para('Impactos Principais')
+        if p:
+            empty = find_next_empty(p)
+            if empty:
+                set_text(empty, report.executive_summary.impact)
+
+        p = find_para('Identificação:')
+        if p:
+            set_text(p, f"Identificação: {report.executive_summary.root_cause}")
+
+        p = find_para('Ação Imediata:')
+        if p:
+            set_text(p, f"Ação Imediata: {report.executive_summary.impact}")
+
+        p = find_para('Resolução Definitiva:')
+        if p:
+            set_text(p, f"Resolução Definitiva: {report.executive_summary.resolution}")
+
+        # === NEXT STEPS ===
+        p = find_para('Plano de Governança')
+        if p and report.next_steps:
+            set_text(p, report.next_steps[0])
+            current = p
+            for step in report.next_steps[1:]:
+                current = insert_after(current, step)
+
+        # === VISÃO DETALHADA ===
+        if report.timeline:
+            detection_kws = ['detect', 'identif', 'aciona', 'alerta', 'recebid', 'report']
+            mitigation_kws = ['mitiga', 'parcial', 'paliativ', 'workaround', 'contorn']
+            resolution_kws = ['resolv', 'deploy', 'fix', 'corrig', 'encerr', 'restabelec']
+
+            p = find_para('IDENTIFICAÇÃO/DETECÇÃO DETALHADA')
+            if p:
+                ev = next((e for e in report.timeline if any(k in e.event.lower() for k in detection_kws)), report.timeline[0])
+                set_text(p, f"IDENTIFICAÇÃO/DETECÇÃO DETALHADA | {ev.timestamp}")
+                empty = find_next_empty(p)
+                if empty:
+                    set_text(empty, ev.event)
+
+            p = find_para('RESOLUÇÃO PARCIAL/MITIGAÇÃO')
+            if p:
+                ev = next((e for e in report.timeline if any(k in e.event.lower() for k in mitigation_kws)), None)
+                if ev:
+                    set_text(p, f"RESOLUÇÃO PARCIAL/MITIGAÇÃO | {ev.timestamp}")
+                    empty = find_next_empty(p)
+                    if empty:
+                        set_text(empty, ev.event)
+
+            p = find_para('RESOLUÇÃO |')
+            if p:
+                ev = next((e for e in reversed(report.timeline) if any(k in e.event.lower() for k in resolution_kws)), report.timeline[-1])
+                set_text(p, f"RESOLUÇÃO | {ev.timestamp}")
+                empty = find_next_empty(p)
+                if empty:
+                    set_text(empty, ev.event)
+
+            p = find_para('RESOLUÇÃO DETALHADA')
+            if p:
+                empty = find_next_empty(p)
+                if empty:
+                    set_text(empty, report.executive_summary.resolution)
+
+        # === TIMELINE ===
+        p = find_para('Engajamento do Time IDP')
+        if p and report.timeline:
+            set_text(p, f"{report.timeline[0].timestamp} - {report.timeline[0].event}")
+            current = p
+            for event in report.timeline[1:]:
+                current = insert_after(current, f"{event.timestamp} - {event.event}")
+        elif p:
+            set_text(p, '')
+
         buffer = io.BytesIO()
         doc.save(buffer)
         return buffer.getvalue()
