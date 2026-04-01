@@ -10,3 +10,6 @@ wheels/
 .venv
 .env
 .venv_*
+
+# Changelog local
+static/changelog_*.txt

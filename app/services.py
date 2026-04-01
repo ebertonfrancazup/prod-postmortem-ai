@@ -33,6 +33,7 @@ async def process_incident_data(request: AnalyzeRequest) -> IncidentReport:
         raise HTTPException(status_code=500, detail="API Key not configured.")
 
     optional_context = []
+    if request.ticket_number: optional_context.append(f"Ticket Number: {request.ticket_number}")
     if request.time_range: optional_context.append(f"Time Range: {request.time_range}")
     if request.affected_services: optional_context.append(f"Affected Services: {request.affected_services}")
     if request.impact: optional_context.append(f"Impact Classification: {request.impact}")
@@ -63,6 +64,11 @@ async def process_incident_data(request: AnalyzeRequest) -> IncidentReport:
                             .replace("{context_str}", context_str)\
                             .replace("{images_instruction}", images_instruction)\
                             .replace("{time_range_instruction}", time_range_instruction)
+
+    if request.language == "pt-br":
+        prompt = "LANGUAGE INSTRUCTION: Generate ALL text content (titles, summaries, descriptions, timeline events, next steps) in Brazilian Portuguese (pt-BR). Do NOT use English for any content fields.\n\n" + prompt
+    else:
+        prompt = "LANGUAGE INSTRUCTION: Generate ALL text content in English.\n\n" + prompt
 
     try:
         model = genai.GenerativeModel('gemini-2.5-flash', generation_config={"response_mime_type": "application/json"})
@@ -106,6 +112,19 @@ class ReportGenerator:
     def __init__(self, request: AnalyzeRequest):
         self.request = request
         self.styles = getSampleStyleSheet()
+
+        # Extract StackSpot logo from Template.docx (DOCX is a ZIP archive)
+        self._logo_data = None
+        import zipfile
+        tpl = os.path.join(os.path.dirname(__file__), 'templates', 'Template.docx')
+        if os.path.exists(tpl):
+            try:
+                with zipfile.ZipFile(tpl, 'r') as z:
+                    imgs = sorted([f for f in z.namelist() if f.startswith('word/media/')])
+                    if imgs:
+                        self._logo_data = z.read(imgs[0])
+            except Exception as e:
+                logger.warning(f"Could not extract logo from template: {e}")
         
         # Custom Styles
         self.styles.add(ParagraphStyle(name='HeaderLeft', parent=self.styles['Normal'], fontSize=16, leading=20, textColor=colors.whitesmoke, fontName='Helvetica-Bold'))
@@ -131,19 +150,35 @@ class ReportGenerator:
 
     def _header_footer(self, canvas, doc):
         canvas.saveState()
+
+        # White header background
+        canvas.setFillColor(colors.white)
+        canvas.rect(0, 718, letter[0], 100, fill=1, stroke=0)
+
+        # Orange accent line at the bottom of the header
         canvas.setFillColor(colors.HexColor("#ff6900"))
-        canvas.rect(0, 720, letter[0], 100, fill=1, stroke=0)
-        
-        canvas.setFillColor(colors.whitesmoke)
-        canvas.setFont("Helvetica-Bold", 18)
-        canvas.drawString(40, 755, "PROD POST-MORTEM AI")
-        canvas.setFont("Helvetica", 12)
-        canvas.drawString(275, 755, "EXECUTIVE REPORT")
-        
-        canvas.setFont("Helvetica-Bold", 12)
-        canvas.drawRightString(letter[0] - 40, 765, "CONFIDENTIAL")
+        canvas.rect(0, 718, letter[0], 3, fill=1, stroke=0)
+
+        # StackSpot logo (extracted from Template.docx)
+        if self._logo_data:
+            from reportlab.lib.utils import ImageReader
+            logo_reader = ImageReader(io.BytesIO(self._logo_data))
+            lw, lh = logo_reader.getSize()
+            target_h = 38
+            target_w = target_h * (lw / lh)
+            canvas.drawImage(logo_reader, 40, 740, width=target_w, height=target_h, mask='auto')
+        else:
+            canvas.setFillColor(colors.HexColor("#ff6900"))
+            canvas.setFont("Helvetica-Bold", 20)
+            canvas.drawString(40, 748, "StackSpot")
+
+        # Right side: label + date
+        canvas.setFillColor(colors.HexColor("#374151"))
+        canvas.setFont("Helvetica-Bold", 11)
+        canvas.drawRightString(letter[0] - 40, 762, "CONFIDENTIAL")
         canvas.setFont("Helvetica", 10)
-        canvas.drawRightString(letter[0] - 40, 750, f"Generated: {datetime.now().strftime('%B %d, %Y')}")
+        canvas.drawRightString(letter[0] - 40, 748, f"EXECUTIVE REPORT  |  {datetime.now().strftime('%B %d, %Y')}")
+
         canvas.restoreState()
 
     def generate_pdf(self, report: IncidentReport) -> bytes:
@@ -151,14 +186,30 @@ class ReportGenerator:
         doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=85, bottomMargin=40)
         elements = []
 
-        elements.append(Paragraph("Incident Report", self.styles['MainTitle']))
+        # Language-aware labels
+        is_pt = self.request.language == "pt-br"
+        L = {
+            'exec_summary': 'Resumo Executivo' if is_pt else 'Executive Summary',
+            'impact': 'Impacto' if is_pt else 'Impact',
+            'root_cause': 'Causa Raiz' if is_pt else 'Root Cause',
+            'resolution': 'Resolucao' if is_pt else 'Resolution',
+            'next_steps': 'Proximos Passos' if is_pt else 'Suggested Next Steps',
+            'timeline_title': 'Linha do Tempo da Resposta' if is_pt else 'Team Response Timeline',
+            'timestamp': 'Horario' if is_pt else 'Timestamp',
+            'event': 'Decisao / Evento' if is_pt else 'Decision / Event',
+            'sla_budget': 'BUDGET SLA UTILIZADO' if is_pt else 'SLA BUDGET USED',
+            'monitoring': 'Evidencia de Monitoramento' if is_pt else 'Monitoring Evidence',
+            'threshold': 'Meta' if is_pt else 'Threshold Target',
+        }
+
+        elements.append(Paragraph("Post-Mortem", self.styles['MainTitle']))
         elements.append(Paragraph(report.metrics.incident_title, self.styles['SubTitle']))
         elements.append(Spacer(1, 10))
 
         # Cards - Modern Floating Style
         metrics = report.metrics
         usable_width = letter[0] - 80
-        num_cards = 4 if self.request.customers else 3
+        num_cards = 4
         gap = 10
         card_w = (usable_width - (gap * (num_cards - 1))) / num_cards
 
@@ -189,27 +240,33 @@ class ReportGenerator:
                 self.canv.setFillColor(self.bg_color)
                 self.canv.setStrokeColor(self.outline_color)
                 self.canv.setLineWidth(0.5)
-                # Mathematical precise rounded corners filling the background perfectly
                 self.canv.roundRect(0, 0, self.width, self.height, 16, fill=1, stroke=1)
-                
+
                 padding = 16
-                
-                # Wrap text to calculate dimensions
-                w_t, h_t = self.title_p.wrap(self.width - padding*2, self.height)
-                w_s, h_s = self.sub_p.wrap(self.width - padding*2, self.height)
-                w_v, h_v = self.value_p.wrap(self.width - padding*2, self.height)
+                available_w = self.width - padding * 2
+
+                w_t, h_t = self.title_p.wrap(available_w, self.height)
+                w_s, h_s = self.sub_p.wrap(available_w, self.height)
+                w_v, h_v = self.value_p.wrap(available_w, self.height)
 
                 y_cursor = self.height - padding
-                
-                # Title Top Left
+
                 self.title_p.drawOn(self.canv, padding, y_cursor - h_t)
                 y_cursor -= (h_t + 2)
-                # Subtitle right below title
-                self.sub_p.drawOn(self.canv, padding, y_cursor - h_s)
-                y_cursor -= (h_s + 10) # Dynamic space before Big Number
-                # Value stacked correctly to avoid touching the subtitle
+
+                # Only draw subtitle if it has actual content (h_s > 2 means non-empty)
+                if h_s > 2:
+                    self.sub_p.drawOn(self.canv, padding, y_cursor - h_s)
+                    y_cursor -= (h_s + 8)
+                else:
+                    y_cursor -= 6
+
+                # Clamp value height so it never overflows the card bottom
+                max_v_h = max(y_cursor - padding, 10)
+                if h_v > max_v_h:
+                    w_v, h_v = self.value_p.wrap(available_w, max_v_h)
                 self.value_p.drawOn(self.canv, padding, y_cursor - h_v)
-                
+
                 self.canv.restoreState()
 
         def create_modern_card(title, value, sub, is_green=False):
@@ -219,11 +276,14 @@ class ReportGenerator:
             value_p = Paragraph(value, val_style)
             return RoundedCard(title_p, sub_p, value_p, width=card_w, height=105)
 
+        cust_value = self.request.customers if self.request.customers else metrics.affected_customers
+        cust_label = "Clientes Afetados" if (cust_value and (',' in cust_value or ' e ' in cust_value.lower())) else "Cliente Afetado"
+
         row1_cards = [
-            create_modern_card("Impact", f"{metrics.impact}", "Incident severity", is_green=False),
-            create_modern_card("Downtime / MTTR", f"{metrics.total_downtime}", "Total disruption time"),
-            create_modern_card("Service Status", f"{metrics.service_status}", "Current status", is_green=(metrics.service_status.lower()=="resolved")),
-            create_modern_card("Affected Customers", f"{self.request.customers if self.request.customers else metrics.affected_customers}", "Identified client radius")
+            create_modern_card("Criticidade", f"{metrics.impact}", ""),
+            create_modern_card("Downtime / MTTR", f"{metrics.total_downtime}", ""),
+            create_modern_card("Status", f"{metrics.service_status}", "", is_green=(metrics.service_status.lower()=="resolved")),
+            create_modern_card(cust_label, f"{cust_value}", ""),
         ]
 
         def pack_cards(cards_list):
@@ -245,16 +305,16 @@ class ReportGenerator:
         elements.append(pack_cards(row1_cards))
         elements.append(Spacer(1, 10))
 
-        # Optional Row 2
+        # Optional Row 2 — user-provided fields only
         row2_cards = []
-        if metrics.affected_users:
-            row2_cards.append(create_modern_card("Affected Users", f"{metrics.affected_users}", "Estimated users impacted"))
-        if metrics.error_count:
-            row2_cards.append(create_modern_card("Error Count", f"{metrics.error_count}", "Identified errors"))
-        if metrics.main_service:
-            row2_cards.append(create_modern_card("Main Service", f"{metrics.main_service}", "Primary impacted system"))
-        if metrics.infra_slo:
-            row2_cards.append(create_modern_card("Infra SLO", f"{metrics.infra_slo}", "Infrastructure SLO limit"))
+        if self.request.slo:
+            row2_cards.append(create_modern_card("SLO", self.request.slo, ""))
+        if self.request.affected_requests_pct:
+            row2_cards.append(create_modern_card("% Requisições Afetadas", self.request.affected_requests_pct, ""))
+        if self.request.impacted_journeys:
+            row2_cards.append(create_modern_card("Jornadas Impactadas", self.request.impacted_journeys, ""))
+        if self.request.estimated_loss:
+            row2_cards.append(create_modern_card("Perda Estimada", self.request.estimated_loss, ""))
             
         if row2_cards:
             for c in row2_cards:
@@ -264,7 +324,50 @@ class ReportGenerator:
         else:
             elements.append(Spacer(1, 10))
 
-        # Directly insert User provided Datadog/Monitor Images if present
+        # Two Columns Split (Executive Summary + SLA)
+        sla_hours = self.request.sla_hours
+        sla_max_minutes = sla_hours * 60
+        actual_minutes = metrics.downtime_minutes
+        
+        sla_percent = min(100, round((actual_minutes / sla_max_minutes) * 100)) if sla_max_minutes > 0 else 0
+        sla_color = "#10B981" if sla_percent < 50 else ("#F59E0B" if sla_percent < 80 else "#EF4444")
+        
+        left_col = [
+            Paragraph(L['exec_summary'], self.styles['SectionTitle']),
+            Paragraph(f"<b>{L['impact']}:</b> {report.executive_summary.impact}", self.styles['ExecText'])
+        ]
+
+        sla_circle_val = Paragraph(f"<font color='{sla_color}'>{sla_percent}%</font>", self.styles['SlaPercent'])
+        right_col = [
+            Spacer(1, 5),
+            sla_circle_val,
+            Paragraph(L['sla_budget'], self.styles['SlaLabel']),
+            Paragraph(f"({sla_hours}h {L['threshold']})", self.styles['TokenFooter'])
+        ]
+
+        summary_table = Table([[left_col, right_col]], colWidths=[360, 160])
+        summary_table.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('ALIGN', (1, 0), (1, 0), 'CENTER'),
+            ('BOX', (0, 0), (0, 0), 0.5, colors.HexColor("#E5E7EB")),
+            ('BOX', (1, 0), (1, 0), 0.5, colors.HexColor("#E5E7EB")),
+            ('PADDING', (0, 0), (-1, -1), 15)
+        ]))
+
+        elements.append(summary_table)
+        elements.append(Spacer(1, 15))
+
+        elements.append(Paragraph(f"<b>{L['root_cause']}:</b> {report.executive_summary.root_cause}", self.styles['ExecText']))
+        elements.append(Paragraph(f"<b>{L['resolution']}:</b> {report.executive_summary.resolution}", self.styles['ExecText']))
+        elements.append(Spacer(1, 15))
+
+        elements.append(Paragraph(L['next_steps'], self.styles['SectionTitle']))
+        for step in report.next_steps:
+            elements.append(Paragraph(f"• {step}", self.styles['NextStepBullet']))
+
+        elements.append(Spacer(1, 20))
+
+        # Monitoring Evidence — user provided screenshots (after next steps, before timeline)
         if self.request.images:
             from reportlab.lib.utils import ImageReader
             for b64 in self.request.images:
@@ -276,69 +379,29 @@ class ReportGenerator:
                     rp_img = ImageReader(img_buffer)
                     iw, ih = rp_img.getSize()
                     aspect = ih / float(iw)
-                    draw_w = min(usable_width, iw) # don't blow up small pics
+                    draw_w = min(usable_width, iw)
                     if iw > usable_width: draw_w = usable_width
                     draw_h = draw_w * aspect
-                    
-                    elements.append(Paragraph("Monitoring Evidence", self.styles['SectionTitle']))
+
+                    elements.append(Paragraph(L['monitoring'], self.styles['SectionTitle']))
                     elements.append(RLImage(img_buffer, width=draw_w, height=draw_h))
                     elements.append(Spacer(1, 20))
-                    break # Only stamp the FIRST image onto the executive report
+                    break
                 except Exception as e:
                     logger.error(f"Failed to embed user image: {e}")
 
-        # Two Columns Split (Executive Summary + SLA)
-        sla_hours = self.request.sla_hours
-        sla_max_minutes = sla_hours * 60
-        actual_minutes = metrics.downtime_minutes
-        
-        sla_percent = min(100, round((actual_minutes / sla_max_minutes) * 100)) if sla_max_minutes > 0 else 0
-        sla_color = "#10B981" if sla_percent < 50 else ("#F59E0B" if sla_percent < 80 else "#EF4444")
-        
-        left_col = [
-            Paragraph("Executive Summary", self.styles['SectionTitle']),
-            Paragraph(f"<b>Impact:</b> {report.executive_summary.impact}", self.styles['ExecText'])
-        ]
-        
-        sla_circle_val = Paragraph(f"<font color='{sla_color}'>{sla_percent}%</font>", self.styles['SlaPercent'])
-        right_col = [
-            Spacer(1, 5),
-            sla_circle_val,
-            Paragraph("SLA BUDGET USED", self.styles['SlaLabel']),
-            Paragraph(f"({sla_hours}h Threshold Target)", self.styles['TokenFooter'])
-        ]
-        
-        summary_table = Table([[left_col, right_col]], colWidths=[360, 160])
-        summary_table.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('ALIGN', (1, 0), (1, 0), 'CENTER'),
-            ('BOX', (0, 0), (0, 0), 0.5, colors.HexColor("#E5E7EB")),
-            ('BOX', (1, 0), (1, 0), 0.5, colors.HexColor("#E5E7EB")),
-            ('PADDING', (0, 0), (-1, -1), 15)
-        ]))
-        
-        elements.append(summary_table)
-        elements.append(Spacer(1, 15))
-        
-        elements.append(Paragraph(f"<b>Root Cause:</b> {report.executive_summary.root_cause}", self.styles['ExecText']))
-        elements.append(Paragraph(f"<b>Resolution:</b> {report.executive_summary.resolution}", self.styles['ExecText']))
-        elements.append(Spacer(1, 15))
-
-        elements.append(Paragraph("Suggested Next Steps", self.styles['SectionTitle']))
-        for step in report.next_steps:
-            elements.append(Paragraph(f"• {step}", self.styles['NextStepBullet']))
-        
-        elements.append(Spacer(1, 20))
-
-        elements.append(Paragraph("Team Response Timeline", self.styles['SectionTitle']))
+        elements.append(Paragraph(L['timeline_title'], self.styles['SectionTitle']))
         timeline_data = [[
-            Paragraph("Timestamp", self.styles['TimelineHeader']), 
-            Paragraph("Decision / Event", self.styles['TimelineHeader'])
+            Paragraph(L['timestamp'], self.styles['TimelineHeader']),
+            Paragraph(L['event'], self.styles['TimelineHeader'])
         ]]
         for event in report.timeline:
+            event_text = event.event
+            if event.detail:
+                event_text += f"<br/><font size='8' color='#6B7280'>{event.detail}</font>"
             timeline_data.append([
-                Paragraph(event.timestamp, self.styles['TimelineText']), 
-                Paragraph(event.event, self.styles['TimelineText'])
+                Paragraph(event.timestamp, self.styles['TimelineText']),
+                Paragraph(event_text, self.styles['TimelineText'])
             ])
 
         timeline_table = Table(timeline_data, colWidths=[120, 400])
@@ -458,11 +521,17 @@ class DocxGenerator:
 
         p = find_para('% de requisições afetadas:')
         if p:
-            set_text(p, f"% de requisições afetadas: {metrics.affected_users or ''}")
+            set_text(p, f"% de requisições afetadas: {self.request.affected_requests_pct or metrics.affected_users or ''}")
 
         p = find_para('Canal do incidente:')
         if p:
             set_text(p, f"Canal do incidente: {customers}")
+
+        p = find_para('Perda estimada')
+        if p:
+            loss = self.request.estimated_loss or ''
+            proactive = 'Sim' if self.request.proactive_incident else 'Nao'
+            set_text(p, f"Perda estimada (receita ou produtividade): {loss}\n\nIncidente Proativo? {proactive}")
 
         # Clear the secondary "Duração: 1 hora" placeholder line
         p = find_para('Duração: 1 hora')
@@ -509,6 +578,21 @@ class DocxGenerator:
             for step in report.next_steps[1:]:
                 current = insert_after(current, step)
 
+        # === MONITORING EVIDENCE (images) ===
+        if self.request.images:
+            for b64 in self.request.images:
+                try:
+                    if "," in b64:
+                        _, b64 = b64.split(",", 1)
+                    img_data = base64.b64decode(b64)
+                    img_stream = io.BytesIO(img_data)
+                    doc.add_heading('Evidencia de Monitoramento', level=2)
+                    doc.add_picture(img_stream, width=Inches(6.0))
+                    doc.add_paragraph()
+                    break
+                except Exception as e:
+                    logger.error(f"Failed to embed image in DOCX: {e}")
+
         # === VISÃO DETALHADA ===
         if report.timeline:
             detection_kws = ['detect', 'identif', 'aciona', 'alerta', 'recebid', 'report']
@@ -549,10 +633,17 @@ class DocxGenerator:
         # === TIMELINE ===
         p = find_para('Engajamento do Time IDP')
         if p and report.timeline:
-            set_text(p, f"{report.timeline[0].timestamp} - {report.timeline[0].event}")
+            first = report.timeline[0]
+            first_text = f"{first.timestamp} - {first.event}"
+            if first.detail:
+                first_text += f"\n{first.detail}"
+            set_text(p, first_text)
             current = p
             for event in report.timeline[1:]:
-                current = insert_after(current, f"{event.timestamp} - {event.event}")
+                evt_text = f"{event.timestamp} - {event.event}"
+                if event.detail:
+                    evt_text += f"\n{event.detail}"
+                current = insert_after(current, evt_text)
         elif p:
             set_text(p, '')
 

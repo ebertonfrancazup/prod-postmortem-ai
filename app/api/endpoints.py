@@ -25,9 +25,11 @@ async def export_pdf_endpoint(request_data: dict):
     generator = ReportGenerator(original_req)
     try:
         pdf_bytes = generator.generate_pdf(report)
+        ticket = original_req.ticket_number or ''
         safe_title = report.metrics.incident_title.replace(' ', '_').replace('/', '')
+        prefix = f"Post-Mortem_{ticket}_" if ticket else "Post-Mortem_"
         return Response(content=pdf_bytes, media_type="application/pdf", headers={
-            "Content-Disposition": f"attachment; filename=Executive_Report_{safe_title}.pdf"
+            "Content-Disposition": f"attachment; filename={prefix}{safe_title}.pdf"
         })
     except Exception as e:
         logger.error(f"Error generating PDF: {e}")
@@ -42,9 +44,11 @@ async def export_docx_endpoint(request_data: dict):
     generator = DocxGenerator(original_req)
     try:
         docx_bytes = generator.generate_docx(report)
+        ticket = original_req.ticket_number or ''
         safe_title = report.metrics.incident_title.replace(' ', '_').replace('/', '')
+        prefix = f"Post-Mortem_{ticket}_" if ticket else "Post-Mortem_"
         return Response(content=docx_bytes, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={
-            "Content-Disposition": f"attachment; filename=Executive_Report_{safe_title}.docx"
+            "Content-Disposition": f"attachment; filename={prefix}{safe_title}.docx"
         })
     except Exception as e:
         logger.error(f"Error generating DOCX: {e}")

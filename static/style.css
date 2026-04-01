@@ -392,3 +392,106 @@ button {
     border-radius: 4px;
     font-size: 11px;
 }
+
+/* Toggle Pills */
+.toggle-pills {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    overflow: hidden;
+    width: fit-content;
+}
+
+.toggle-pill {
+    padding: 8px 20px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: var(--text-muted);
+    background: transparent;
+    border-right: 1px solid var(--border-color);
+}
+
+.toggle-pill:last-child {
+    border-right: none;
+}
+
+.toggle-pill.selected {
+    background: #ff6900;
+    color: white;
+    font-weight: 500;
+}
+
+.toggle-pill:hover:not(.selected) {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+/* Preview Panel */
+.preview-card {
+    padding: 24px;
+    margin-top: 20px;
+    border-color: #10b981;
+}
+
+.preview-header {
+    margin-bottom: 20px;
+}
+
+.preview-header h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #10b981;
+    margin-bottom: 6px;
+}
+
+.preview-section {
+    margin-bottom: 16px;
+}
+
+.preview-section > label {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.preview-input {
+    width: 100%;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border-color);
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    color: var(--text-main);
+    font-size: 13px;
+    outline: none;
+    transition: border 0.2s;
+}
+
+.preview-input:focus, .preview-textarea:focus {
+    border-color: #10b981;
+}
+
+.preview-textarea {
+    width: 100%;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border-color);
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    color: var(--text-main);
+    font-size: 13px;
+    outline: none;
+    resize: vertical;
+    line-height: 1.6;
+    font-family: 'Inter', sans-serif;
+}
+
+.preview-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-color);
+}

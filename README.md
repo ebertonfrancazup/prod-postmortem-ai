@@ -61,11 +61,75 @@ prod-postmortem-ai/
 
 ---
 
-## ✨ Features Exclusivas da Plataforma
+## ✨ Features da Plataforma
 
-*   **Multimodal Vision (Evidências de Datadog)**: Arraste e solte capturas de tela dos seus dashboards de observabilidade. O Gemini fará engenharia reversa visual da falha e nosso gerador inserirá nativamente as imagens limpas no PDF final como prova do incidente.
-*   **Dynamic Executive Cards (UI Flutuante)**: Através do motor *ReportLab*, eliminamos o conceito de tabelas rígidas. O PDF ajusta fontes dinamicamente e monta uma arquitetura SaaS de fileiras duplas baseadas no que o modelo encontrou: métricas de núcleo (Impactos P1-P3, Status, MTTR) na linha de cima, e SLOs/Contagem de Erros descobertos autônomamente na linha de baixo.
-*   **Time Range Engine (Fallback Matemático)**: O SRE virtual detecta conflitos materiais. Se os logs possuírem buracos de tempo, ele utiliza janelas explícitas estipuladas pelos redatores humanos e trava firmemente as bordas de downtime, isolando MTTRs de forma determinística e prevenindo alucinações cognitivas no cálculo de SLAs!
+*   **Multimodal Vision (Evidencias de Monitoramento)**: Arraste, solte ou cole (`Ctrl+V`) capturas de tela dos seus dashboards (Datadog, Grafana, etc). O Gemini analisa visualmente a falha e as imagens sao inseridas no PDF e DOCX como evidencia de monitoramento.
+*   **Big Numbers (Metricas Executivas)**: Cards com layout moderno, texto auto-ajustavel e duas fileiras — fixas e dinamicas. Detalhes completos na secao abaixo.
+*   **Pre-visualizacao Editavel**: Apos a LLM gerar o relatorio, um painel de preview permite revisar e editar todos os campos (titulo, metricas, resumo executivo, causa raiz, resolucao, proximos passos, timeline) antes de exportar o PDF ou DOCX.
+*   **Toggle de Idioma (PT-BR / English)**: Labels do PDF, DOCX e instrucao da LLM sao controlados por um toggle — gera tudo em portugues ou tudo em ingles.
+*   **Incidente Proativo**: Toggle Sim/Nao para indicar se o incidente foi detectado proativamente. Preenchido no DOCX automaticamente.
+*   **Timeline Exaustiva**: A LLM e instruida a nao resumir a timeline. Cada evento pode ter um campo `detail` opcional com contexto tecnico, comandos, links e evidencias. Incidentes P1 de 30+ horas geram 30-50+ eventos.
+*   **Exportacao Dupla (PDF + DOCX)**: PDF profissional com logo StackSpot para distribuicao. DOCX editavel baseado em template corporativo para edicao no Google Docs/Word.
+*   **Time Range Engine (Fallback Matematico)**: Se os logs possuirem buracos de tempo, a IA utiliza janelas explicitas do usuario para travar bordas de downtime e calcular SLAs de forma deterministica.
+
+---
+
+## 📊 Big Numbers (Metricas do PDF)
+
+O PDF exibe cards visuais com metricas-chave do incidente, organizados em **duas fileiras**:
+
+### Row 1 — Cards Fixos (sempre presentes)
+
+Esses 4 cards aparecem **sempre** no PDF, independente dos campos preenchidos:
+
+| Card | Label | Fonte do dado | Regras |
+|------|-------|---------------|--------|
+| 1 | **Criticidade** | Campo "Impact" selecionado pelo usuario no dashboard (P1 - Critico, P2 - Alto, P3 - Medio) | Obrigatorio. Preenchido via impact pills no frontend |
+| 2 | **Downtime / MTTR** | Calculado pela LLM a partir dos logs ou informado via Time Range | Formato legivel: "4 horas e 36 minutos" |
+| 3 | **Status** | Determinado pela LLM (Resolvido, Ongoing, etc) | Fica verde quando "Resolvido" |
+| 4 | **Cliente Afetado** | Campo "Affected Customers" preenchido pelo usuario no dashboard | **Plural automatico**: quando contem virgula ou " e ", o label muda para "Clientes Afetados" |
+
+> Os cards fixos **nao possuem subtitulo** — apenas o label e o valor em destaque.
+
+### Row 2 — Cards Dinamicos (aparecem somente quando preenchidos)
+
+Esses cards **so aparecem** quando o usuario preenche o campo correspondente no dashboard. Se nenhum for preenchido, a row 2 nao e renderizada:
+
+| Card | Label | Campo no Frontend | Exemplo |
+|------|-------|-------------------|---------|
+| 1 | **SLO** | Input "SLO" | `99.9%` |
+| 2 | **% Requisicoes Afetadas** | Input "% Requisicoes Afetadas" | `98%` ou `100% - Indisponibilidade Total` |
+| 3 | **Jornadas Impactadas** | Input "Jornadas Impactadas" | `Checkout, Login` |
+| 4 | **Perda Estimada** | Input "Perda Estimada" | `R$ 50.000` |
+
+> Esses campos sao informados **manualmente pelo usuario** no painel de parametros do frontend, nao sao gerados pela LLM.
+
+### Regras de Layout dos Cards
+
+- **Auto-fit de texto**: O tamanho da fonte do valor se ajusta automaticamente:
+  - Ate 12 caracteres: fonte 16pt (bold)
+  - 13-20 caracteres: fonte 13pt (bold)
+  - 20+ caracteres: fonte 10pt (bold)
+- **Overflow protection**: O valor nunca escapa do bloco do card — e clampado para caber na altura disponivel
+- **Subtitulo condicional**: So e renderizado se tiver conteudo (nao ocupa espaco vazio)
+- **Gap entre cards**: 10px de espaco entre cada card
+- **Largura**: Calculada automaticamente dividindo a largura util da pagina pelo numero de cards
+
+### Campos do Dashboard → Big Numbers → DOCX
+
+Os mesmos campos preenchidos no frontend tambem sao utilizados no DOCX editavel:
+
+| Campo Frontend | Big Number (PDF) | Campo no Template DOCX |
+|----------------|------------------|----------------------|
+| Impact pill | Criticidade | Impacto |
+| Time Range / LLM | Downtime / MTTR | Duracao |
+| LLM | Status | Status |
+| Affected Customers | Cliente(s) Afetado(s) | Canal do incidente |
+| SLO | SLO | Impacto SLA/SLO |
+| % Requisicoes Afetadas | % Requisicoes Afetadas | % de requisicoes afetadas |
+| Jornadas Impactadas | Jornadas Impactadas | (nao mapeado no template atual) |
+| Perda Estimada | Perda Estimada | Perda estimada (receita ou produtividade) |
+| Proativo toggle | (nao exibido no PDF) | Incidente Proativo? |
 
 ---
 

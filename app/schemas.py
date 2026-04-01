@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 class AnalyzeRequest(BaseModel):
+    ticket_number: Optional[str] = Field(None, description="Incident ticket number, e.g. CS0005577")
     logs: str = Field(..., description="System logs during the incident")
     transcription: Optional[str] = Field("", description="Chat/Voice transcription of the team during the incident")
     time_range: Optional[str] = Field(None, description="Optional time window of the incident")
@@ -10,6 +11,12 @@ class AnalyzeRequest(BaseModel):
     key_stakeholders: Optional[str] = Field(None, description="Optional key stakeholders involved")
     sla_hours: int = Field(2, description="Selected SLA boundary in hours")
     customers: Optional[str] = Field(None, description="Affected customers to highlight")
+    slo: Optional[str] = Field(None, description="SLO value, e.g. 99.9%")
+    affected_requests_pct: Optional[str] = Field(None, description="Percentage of affected requests, e.g. 98%")
+    impacted_journeys: Optional[str] = Field(None, description="Impacted user journeys, e.g. Checkout, Login")
+    estimated_loss: Optional[str] = Field(None, description="Estimated revenue or productivity loss, e.g. R$ 50.000")
+    language: str = Field("pt-br", description="Report language: 'pt-br' or 'en'")
+    proactive_incident: Optional[bool] = Field(None, description="Whether the incident was proactively detected")
     images: List[str] = Field(default=[], description="Base64 encoded images (e.g. Datadog screenshots)")
 
 class ExecutiveSummary(BaseModel):
@@ -32,7 +39,8 @@ class Metrics(BaseModel):
 
 class CriticalEvent(BaseModel):
     timestamp: str = Field(..., description="Time of the event, e.g., 09:00:00")
-    event: str = Field(..., description="Description of the event")
+    event: str = Field(..., description="Short title of the event")
+    detail: Optional[str] = Field(None, description="Longer description with technical context, commands, evidence, or links")
 
 class IncidentReport(BaseModel):
     executive_summary: ExecutiveSummary
