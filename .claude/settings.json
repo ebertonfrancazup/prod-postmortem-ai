@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(docker compose*)",
+      "Bash(docker logs*)",
+      "Bash(curl*localhost*)",
+      "Bash(file *)",
+      "Bash(ls *)",
+      "Bash(uv run*)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)"
+    ]
+  }
+}
